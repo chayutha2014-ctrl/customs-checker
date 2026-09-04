@@ -8,6 +8,8 @@ from itertools import combinations
 from statistics import median
 import re
 
+from .numbers import parse_number
+
 TOTAL_LABELS = ["TOTAL", "รวม", "ยอดรวม", "GRAND TOTAL", "SAY TOTAL"]
 
 
@@ -29,13 +31,7 @@ class Cell:
     def h(self): return self.y1 - self.y0
 
     def number(self):
-        t = re.sub(r"[^\d.]", "", self.text.replace(",", ""))
-        if not t or t == "." or t.count(".") > 1:
-            return None
-        try:
-            return float(t)
-        except ValueError:
-            return None
+        return parse_number(self.text)
 
 
 @dataclass
