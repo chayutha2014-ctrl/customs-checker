@@ -7,6 +7,7 @@ from pathlib import Path
 import csv, re, json
 from datetime import date
 from customs_checker.dates import parse_date
+from customs_checker.numbers import parse_number
 import pytesseract
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
@@ -46,12 +47,12 @@ def date_variants(iso: str) -> set:
 
 
 def numbers_in(text: str) -> set:
+    """ใช้ตัวแยกวิเคราะห์ตัวเดียวกับระบบจริง เพื่อไม่ให้การวัดเพี้ยนจากของจริง"""
     out = set()
-    for tok in re.findall(r"\d[\d,]*\.?\d*", text):
-        try:
-            out.add(round(float(tok.replace(",", "")), 3))
-        except ValueError:
-            pass
+    for tok in re.findall(r"\d[\d.,]*", text):
+        v = parse_number(tok)
+        if v is not None:
+            out.add(round(v, 3))
     return out
 
 
