@@ -12,8 +12,10 @@ from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
 
 OUT = Path("docs_out")
-TRUTH = OUT / "_truth.csv"
-CACHE = OUT / "_ocr_cache.json"
+import sys
+TRUTH = Path(sys.argv[1]) if len(sys.argv) > 1 else OUT / "_truth.csv"
+CACHE_NAME = TRUTH.stem + "_cache.json"
+CACHE = OUT / CACHE_NAME
 FIELDS = ["invoice_no", "invoice_date", "currency",
           "total_amount", "line1_qty", "line1_unit_price"]
 MONS = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]
@@ -71,8 +73,8 @@ def found(field: str, truth: str, text: str) -> bool:
 # ตัวจับข้อความที่หน้าตาเหมือนวันที่ แล้วส่งให้ตัวแปลงของระบบตัดสิน
 DATE_TOKEN = re.compile(
     r"\d{1,4}\s*[/.\-]\s*\d{1,2}\s*[/.\-]\s*\d{2,4}"
-    r"|\d{1,2}\s*[-/ ]?\s*(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s*[-/, ]?\s*\d{2,4}"
-    r"|(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s*\d{1,2}\s*,?\s*\d{2,4}"
+    r"|\d{1,2}(?:ST|ND|RD|TH)?[\s.,/-]*(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[\s.,/-]*\d{2,4}"
+    r"|(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[\s.,/-]*\d{1,2}(?:ST|ND|RD|TH)?[\s.,/-]*\d{2,4}"
     r"|\d{1,2}\s*(?:ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.)\s*\d{2,4}",
     re.I)
 
@@ -100,15 +102,20 @@ def main() -> None:
     details = []
 
     for r in rows:
-        path = OUT / r["file"] / r["page"]
         key = f"{r['file']}/{r['page']}"
         if key not in cache:
-            img = Image.open(path)
-            t = pytesseract.image_to_string(img, lang="eng+tha")
-            res, _ = rapid(str(path))
-            rp = " ".join(i[1] for i in (res or []))
-            cache[key] = {"tesseract": t, "rapidocr": rp}
-            print(f"  OCR {key}")
+            if r["page"] == "*":
+                pages = sorted(q for q in (OUT / r["file"]).glob("page_*")
+                               if q.suffix.lower() in {".png", ".jpg", ".jpeg"})
+            else:
+                pages = [OUT / r["file"] / r["page"]]
+            t_all, r_all = [], []
+            for pg in pages:
+                t_all.append(pytesseract.image_to_string(Image.open(pg), lang="eng+tha"))
+                res, _ = rapid(str(pg))
+                r_all.append(" ".join(i[1] for i in (res or [])))
+            cache[key] = {"tesseract": "\n".join(t_all), "rapidocr": "\n".join(r_all)}
+            print(f"  OCR {key} ({len(pages)} หน้า)")
         texts = cache[key]
         texts["รวมกัน"] = texts["tesseract"] + "\n" + texts["rapidocr"]
 

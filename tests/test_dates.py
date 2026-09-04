@@ -67,3 +67,16 @@ def test_junk_never_crashes(junk):
     """ข้อความปนที่ OCR อ่านได้จริง ต้องไม่ทำให้ระบบพัง"""
     got = parse_date(junk, ref=REF)
     assert got.value is None or abs(got.value.year - REF.year) <= 20
+
+
+@pytest.mark.parametrize("raw,expect", [
+    ("AUG.,24TH,2026",   date(2026, 8, 24)),   # FUJIAN — จุด จุลภาค และลำดับที่
+    ("AUG.,24TH, 2026",  date(2026, 8, 24)),
+    ("DEC.,31ST2026",    date(2026, 12, 31)),
+    ("1ST SEP 2026",     date(2026, 9, 1)),
+    ("2ND OCT 26",       date(2026, 10, 2)),
+    ("3RD NOV 2026",     date(2026, 11, 3)),
+])
+def test_ordinal_suffix(raw, expect):
+    """วันที่มีคำต่อท้ายลำดับที่ 24TH 31ST 2ND 3RD"""
+    assert parse_date(raw, ref=REF).value == expect

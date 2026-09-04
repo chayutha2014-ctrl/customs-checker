@@ -4,8 +4,10 @@ from pathlib import Path
 import csv, json, re
 
 OUT = Path("docs_out")
-cache = json.loads((OUT / "_ocr_cache.json").read_text(encoding="utf-8"))
-rows = list(csv.DictReader((OUT / "_truth.csv").open(encoding="utf-8")))
+import sys
+T = Path(sys.argv[1]) if len(sys.argv) > 1 else OUT / "_truth.csv"
+cache = json.loads((OUT / (T.stem + "_cache.json")).read_text(encoding="utf-8"))
+rows = list(csv.DictReader(T.open(encoding="utf-8")))
 
 DATE_RE = re.compile(
     r"\d{1,4}[\s./-]*(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[\s./-]*\d{2,4}"
