@@ -1,0 +1,13 @@
+# เอกสารลูกค้า - ห้ามขึ้น git เด็ดขาด
+docs_in/
+docs_out/
+
+# ความลับ
+.env
+*.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
