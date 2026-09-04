@@ -21,6 +21,9 @@ for tr in csv.DictReader(T.open(encoding="utf-8")):
           f"คำนวณ {(got or 0):>13,.2f}  {ok}")
     print(f"  คอลัมน์ตัวเลขที่พบ {r['n_numeric_cols']} · "
           f"บรรทัดสินค้า {len(r['lines'])} · {r['status']}")
+    if r.get("possible_total"):
+        print(f"  💡 ถ้าจำนวนเงินที่ค้างอยู่ {r['unexplained']} เป็นบรรทัดสินค้า "
+              f"ยอดรวมจะเป็น {r['possible_total']:,.2f}")
     if r.get("missing_lines"):
         print(f"  ⚠ บรรทัดที่อ่านปริมาณ/ราคาไม่ครบ: "
               f"{[f'{v:,.2f}' for v in r['missing_lines']]}")

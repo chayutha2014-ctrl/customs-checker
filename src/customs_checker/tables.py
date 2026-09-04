@@ -202,6 +202,11 @@ def analyze_invoice(rows):
         res["status"] = f"ลงตัวหลังเติม {len(extra)} บรรทัดที่อ่านปริมาณ/ราคาไม่ครบ"
     else:
         bigger = [v for v in outside if v > computed]
+        smaller = [v for v in outside if v < computed]
+        if smaller:
+            # จำนวนเงินที่เล็กกว่ายอดรวม น่าจะเป็นบรรทัดสินค้าที่อ่านปริมาณ/ราคาไม่ได้
+            res["possible_total"] = round(computed + sum(smaller), 2)
+            res["unexplained"] = sorted(smaller, reverse=True)
         if bigger:
             cand = min(bigger)
             res["gap"] = (cand, round(cand - computed, 2))
