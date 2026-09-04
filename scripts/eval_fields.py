@@ -5,6 +5,8 @@
 """
 from pathlib import Path
 import csv, re, json
+from datetime import date
+from customs_checker.dates import parse_date
 import pytesseract
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
@@ -56,13 +58,37 @@ def found(field: str, truth: str, text: str) -> bool:
         return True
     flat = squash(text)
     if field == "invoice_date":
-        return any(v in flat for v in date_variants(truth))
+        return date_found(truth, text)
     if field in {"total_amount", "line1_qty", "line1_unit_price"}:
         try:
             return round(float(truth), 3) in numbers_in(text)
         except ValueError:
             return squash(truth) in flat
     return squash(truth) in flat
+
+
+
+# ตัวจับข้อความที่หน้าตาเหมือนวันที่ แล้วส่งให้ตัวแปลงของระบบตัดสิน
+DATE_TOKEN = re.compile(
+    r"\d{1,4}\s*[/.\-]\s*\d{1,2}\s*[/.\-]\s*\d{2,4}"
+    r"|\d{1,2}\s*[-/ ]?\s*(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s*[-/, ]?\s*\d{2,4}"
+    r"|(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s*\d{1,2}\s*,?\s*\d{2,4}"
+    r"|\d{1,2}\s*(?:ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.)\s*\d{2,4}",
+    re.I)
+
+# วันอ้างอิงคงที่ ไม่ผูกกับเฉลย เพื่อไม่ให้การวัดวนเป็นวงกลม
+REF = date(2026, 9, 4)
+
+
+def date_found(truth: str, text: str) -> bool:
+    want = date.fromisoformat(truth)
+    for m in DATE_TOKEN.finditer(text):
+        got = parse_date(m.group(0), ref=REF)
+        if got.value == want:
+            return True
+        if got.ambiguous and want in (got.alternatives or ()):
+            return True
+    return False
 
 
 def main() -> None:
