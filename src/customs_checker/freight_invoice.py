@@ -27,6 +27,9 @@ TOL = 0.02
 MIN_AMOUNT = 0.009          # เล็กกว่านี้ถือว่าไม่ใช่จำนวนเงิน
 
 _NUMTOK = re.compile(r"[\d][\d.,]*")
+SECTION_WORDS = ("RATE", "UNIT", "AMOUNT", "CURRENCY", "VOLUME", "QTY",
+                 "QTYS", "DESCRIPTION", "UOM")
+MIN_SECTION_WORDS = 3
 TOTAL_WORDS = ("TOTAL", "TOTA", "GRANDTOTAL", "AMOUNT", "ยอดรวม", "รวมทั้งสิ้น")
 SKIP_WORDS = ("VAT", "ภาษีมูลค่าเพิ่ม")
 
@@ -104,6 +107,57 @@ class FreightInvoice:
     status: str = "ยังไม่ได้อ่าน"
 
 
+def numbers_in_raw(text, strict=True):
+    """เหมือน numbers_in แต่คืนข้อความต้นฉบับของตัวเลขมาด้วย
+
+    ต้องใช้ข้อความต้นฉบับเพื่อรู้ว่าพิมพ์ทศนิยมไว้กี่ตำแหน่ง
+    "1.00" กับ "1" เป็นค่าเดียวกันแต่บอกความละเอียดต่างกัน
+    """
+    t = str(text or "")
+    out = []
+    for m in _NUMTOK.finditer(t):
+        if strict:
+            pre = _run_before(t, m.start())
+            suf = _run_after(t, m.end())
+            if (pre and pre not in OK_PREFIX) or (suf and suf not in OK_SUFFIX):
+                continue
+        v = parse_number(m.group(0))
+        if v is not None:
+            out.append((m.start(), v, m.group(0)))
+    return out
+
+
+def _decimals(raw):
+    t = str(raw).rstrip(".,")
+    return len(t.split(".")[-1]) if "." in t else 0
+
+
+MAX_REL_TOL = 0.002      # เพดาน 0.2% ของจำนวนเงิน
+
+
+def rounding_tol(a, b, ra=None, rb=None, c=None, floor=TOL):
+    """ค่ายอมรับที่คิดจากการปัดเศษของตัวเลขที่พิมพ์ไว้
+
+    ใบแจ้งหนี้พิมพ์อัตราแบบปัดแล้ว เช่นอัตราจริง 7.5464 พิมพ์เป็น 7.55
+    ผลคูณจึงคลาดจากจำนวนเงินที่พิมพ์ได้ตามสัดส่วน
+      7.55 x 8.51 = 64.2505  แต่ใบเขียน 64.22   ต่างกัน 0.03
+
+    อัตราแสดง 2 ตำแหน่ง คลาดได้ +-0.005 คูณด้วยปริมาณ 8.51 = +-0.043 ซึ่งครอบพอดี
+    ใช้ค่าคงที่ไม่ได้ เพราะปริมาณยิ่งมาก ความคลาดยิ่งมากตามสัดส่วน
+    """
+    est = (0.5 * 10 ** -_decimals(ra if ra is not None else a) * abs(b)
+           + 0.5 * 10 ** -_decimals(rb if rb is not None else b) * abs(a))
+    if c is not None:
+        est = min(est, abs(c) * MAX_REL_TOL)     # กันค่ายอมรับบานจนจับคู่ผิดได้
+    return max(floor, est)
+
+
+def is_section_header(text):
+    """แถวหัวตารางของหมวดค่าใช้จ่าย เช่น DESCRIPTION | RATE | UNIT | AMOUNT"""
+    up = re.sub(r"[^A-Z]+", " ", str(text).upper()).split()
+    return sum(1 for w in SECTION_WORDS if w in up) >= MIN_SECTION_WORDS
+
+
 def find_charge(text, row=0, tol=TOL):
     """หา a x b = c ในบรรทัดเดียว
 
@@ -111,9 +165,11 @@ def find_charge(text, row=0, tol=TOL):
     เพราะใบแจ้งหนี้ทุกแบบวางจำนวนเงินไว้ขวาสุด
     ถ้าไม่บังคับข้อนี้ ตัวเลขอย่างเลขตู้หรือเลขที่งานจะจับคู่กันเองได้โดยบังเอิญ
     """
-    nums = [v for _, v in numbers_in(text)]
-    if len(nums) < 3:
+    raw = numbers_in_raw(text)
+    if len(raw) < 3:
         return None
+    nums = [v for _, v, _ in raw]
+    toks = [t for _, _, t in raw]
     c = nums[-1]
     if abs(c) < MIN_AMOUNT:
         return None
@@ -123,7 +179,8 @@ def find_charge(text, row=0, tol=TOL):
             a, b = nums[i], nums[j]
             if a == 0 or b == 0:
                 continue
-            if abs(a * b - c) <= max(tol, abs(c) * 1e-6):
+            lim = rounding_tol(a, b, toks[i], toks[j], c, tol)
+            if abs(a * b - c) <= max(lim, abs(c) * 1e-6):
                 # เลือกคู่ที่ไม่ใช่ 1 x c ก่อน เพราะให้ข้อมูลมากกว่า
                 trivial = (a == 1 or b == 1)
                 score = (trivial, -(i + j))
@@ -196,6 +253,9 @@ def read_fields(rows):
     out = {}
     for r in rows:
         cells = cells_of(r)
+        if is_section_header(" ".join(cells)):
+            # ORIGIN CHARGES | RATE | UNIT | AMOUNT เคยให้ origin=CHARGES
+            continue
         for i, raw in enumerate(cells):
             n, idx = _norm_map(raw)
             if not n:
@@ -365,8 +425,9 @@ def analyze_freight_invoice(rows):
     res.fields = read_fields(rows)
     res.quantities = stated_quantities(res.fields, "\n".join(texts))
 
+    sections = [i for i, t in enumerate(texts) if is_section_header(t)]
     for i, t in enumerate(texts):
-        if any(w in norm(t) for w in SKIP_WORDS):
+        if i in sections or any(w in norm(t) for w in SKIP_WORDS):
             continue
         ch = find_charge(t, row=i)
         if ch:
@@ -424,6 +485,21 @@ def analyze_freight_invoice(rows):
         else:
             res.status = (f"อ่านบรรทัดค่าใช้จ่ายได้ {len(res.charges)} บรรทัด "
                           f"รวม {computed:,.2f} แต่ไม่พบยอดรวมท้ายใบให้เทียบ")
+
+    # ใบที่แบ่งค่าใช้จ่ายเป็นหลายหมวด ต้องบอกว่าหมวดไหนไม่มีรายการ
+    # ถ้าไม่บอก แล้วยอดที่จับได้เป็นยอดของหมวดเดียว จะกลายเป็นข้อผิดเงียบ
+    if len(sections) > 1:
+        empty = []
+        for n, start in enumerate(sections):
+            end = sections[n + 1] if n + 1 < len(sections) else len(texts)
+            if not any(start < c.row < end for c in res.charges):
+                empty.append(texts[start][:40])
+        res.notes.append(
+            f"ใบนี้แบ่งค่าใช้จ่ายเป็น {len(sections)} หมวด")
+        for e in empty:
+            res.notes.append(
+                f"หมวด '{e}' ไม่มีรายการที่อ่านได้ "
+                f"ต้องยืนยันว่าไม่มีค่าใช้จ่ายในหมวดนี้จริง")
 
     for c in res.charges:
         # ถ้าบรรทัดเขียนหน่วยไว้ ให้เชื่อหน่วยนั้นก่อน แล้วเทียบกับปริมาณจริงในใบ

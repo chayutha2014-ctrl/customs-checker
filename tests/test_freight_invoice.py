@@ -231,3 +231,76 @@ def test_ใบที่ไม่มีค่าใช้จ่ายคงท�
     r = analyze_freight_invoice(XTRIM_A)
     assert len(r.charges) == 1
     assert not r.charges[0].flat
+
+
+# ---------- อัตราที่พิมพ์แบบปัดเศษ ----------
+# ที่มา: SKM_450i26090410270/page_004.png (INDIGO LINE)
+
+INDIGO = """INDIGO LINE
+PRE-INVOICE ( USD)
+INVOICE TO : x | PRE-INVOICENO.:PS2609-0002
+HB/L No.:LLLLCB26814251SZ | QUANTITY:6PALLET(S) | WEIGHT:790KGS.
+DESCRIPTION | RATE | QTY | UNIT | AMOUNT
+FRT | SEAFREIGHTCHARGES | 7.55 USD | 8.51 | M3 | 64.22
+EXW | EX-WORKSERVICECHARGES | 375.63USD | 1.00 | SHP | 375.63
+TOTALAMOUNT: | USD | 439.85""".splitlines()
+
+
+def test_อัตราที่ถูกปัดเศษยังจับคู่ได้():
+    """7.55 x 8.51 = 64.2505 แต่ใบเขียน 64.22 เพราะอัตราจริงคือ 7.5464 แล้วถูกปัด"""
+    c = find_charge("FRT | SEAFREIGHTCHARGES | 7.55 USD | 8.51 | M3 | 64.22")
+    assert c is not None
+    assert c.amount == pytest.approx(64.22)
+
+
+def test_ค่ายอมรับโตตามปริมาณ():
+    """อัตราแสดง 2 ตำแหน่ง คลาดได้ครึ่งหน่วยสุดท้าย คูณด้วยปริมาณ"""
+    from customs_checker.freight_invoice import rounding_tol
+    assert rounding_tol(7.55, 8.51, "7.55", "8.51", 64.22) > 0.031
+    assert rounding_tol(7.55, 1.0, "7.55", "1.00", 7.55) < 0.03
+
+
+def test_ใบที่อัตราถูกปัดเศษอ่านได้ครบ():
+    r = analyze_freight_invoice(INDIGO)
+    assert len(r.charges) == 2
+    assert r.computed == pytest.approx(439.85)
+    assert r.total == pytest.approx(439.85)
+
+
+# ---------- ใบที่แบ่งค่าใช้จ่ายเป็นหลายหมวด ----------
+# ที่มา: Scan2026-09-03_182617/page_007.png (Kuehne+Nagel)
+
+KN = """FREIGHT INVOICE
+KUEHNE+NAGELLTD.
+OCEAN FREIGHT | RATE | UNIT | VOLUME | CURRENCY | AMOUNT
+SEAFREIGHT | 70.000 | SHIPMENT | 1 | USD | 70.000
+EMERGENCYBUNKERSURCHARGE(EBS) | 270.00 | SHIPMENT | 1 | USD | 270.00
+ORIGIN CHARGES | RATE | UNIT | VOLUME | CURRENCY | AMOUNT
+DESTINATION LOCAL CHARGE | RATE | LINN | VOLUME | CURRENCY | AMOUNT
+TOTAL OCEAN FREIGHT:USD | 340.000""".splitlines()
+
+
+def test_หมวดที่ไม่มีรายการต้องถูกรายงาน():
+    """ยอด 340 เป็นยอดของหมวดค่าระวางเท่านั้น
+    ถ้าไม่บอกว่ามีอีกสองหมวดที่ว่าง จะกลายเป็นข้อผิดเงียบเมื่อเจอใบที่หมวดนั้นมีรายการ"""
+    r = analyze_freight_invoice(KN)
+    assert any("3 หมวด" in n for n in r.notes)
+    assert sum(1 for n in r.notes if "ไม่มีรายการที่อ่านได้" in n) == 2
+
+
+def test_หัวตารางหมวดต้องไม่กลายเป็นค่าของช่อง():
+    """ORIGIN CHARGES | RATE | UNIT | AMOUNT เคยให้ origin=CHARGES"""
+    r = analyze_freight_invoice(KN)
+    assert r.fields.get("origin") is None
+    assert r.fields.get("destination") is None
+
+
+def test_หัวตารางต้องไม่ถูกจับเป็นบรรทัดค่าใช้จ่าย():
+    r = analyze_freight_invoice(KN)
+    assert len(r.charges) == 2
+    assert r.computed == pytest.approx(340.00)
+
+
+def test_ใบหมวดเดียวไม่ต้องมีหมายเหตุเรื่องหมวด():
+    r = analyze_freight_invoice(INDIGO)
+    assert not any("หมวด" in n for n in r.notes)
