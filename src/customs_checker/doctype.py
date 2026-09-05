@@ -195,6 +195,40 @@ def _has(pattern: str, norm: str, flat: str) -> bool:
     return p in norm or despace(p) in flat
 
 
+# ---------- เอกสารที่รวม Invoice กับ Packing List ไว้ในใบเดียว ----------
+# ผู้ขายหลายรายทำ "Invoice cum Packing List" คือตารางเดียวมีทั้งราคาและน้ำหนัก
+# ผู้ใช้ยืนยันว่าเจอเป็นปกติ จึงต้องรู้จัก ไม่ใช่บังคับให้เลือกข้างใดข้างหนึ่ง
+#
+# ไม่ทำเป็น Rule แยกในตารางคะแนน เพราะจะไปแย่งคะแนนกับ Invoice และ Packing List
+# จนทั้งสามตัวคะแนนใกล้กันแล้วกลายเป็น "ไม่มั่นใจ" ทั้งหมด
+# ใช้วิธี "จำแนกตามปกติก่อน แล้วค่อยยกระดับ" เมื่อพบร่องรอยของทั้งสองฝั่ง
+# คำต้องบ่งบอก "เงิน" จริง ๆ
+# ห้ามใส่ SAY TOTAL / FOB / CIF เพราะ Packing List ก็มี
+#   ("SAY TOTAL FIVE HUNDRED AND TWENTY (520) CTNS ONLY." / "FOB Xiamen To Thailand")
+# ทดลองใส่แล้วทำให้ Packing List ธรรมดา 6 ใบถูกยกระดับผิด
+PRICE_MARKS = ("UNIT PRICE", "TOTAL AMOUNT", "UNIT COST", "TOTAL VALUE",
+               "U.S.DOLLARS", "US DOLLARS", "SAY RMB", "TOTAL EXW",
+               "GRAND TOTAL", "AMOUNT (USD)", "AMOUNT USD", "AMOUNT RMB",
+               "AMOUNT CNY", "AMOUNT FOREIGN")
+# คำต้องบ่งบอก "น้ำหนัก/ปริมาตร" ซึ่ง Invoice ธรรมดาไม่มี
+# ห้ามใส่ CARTONS / CTNS / PALLET เพราะ Invoice บรรยายสินค้าด้วยคำพวกนี้ได้
+PACK_MARKS = ("N.W.", "G.W.", "NET WEIGHT", "GROSS WEIGHT", "MEASUREMENT",
+              "CBM", "KGS", "N.W", "G.W")
+MIN_MARKS_EACH = 2
+
+
+def _count(marks, norm, flat) -> int:
+    return sum(1 for m in marks if _has(m, norm, flat))
+
+
+def is_combined(page_text: str) -> bool:
+    """หน้านี้มีทั้งราคาและข้อมูลการบรรจุอยู่ในใบเดียวหรือไม่"""
+    n = normalize(page_text)
+    f = despace(n)
+    return (_count(PRICE_MARKS, n, f) >= MIN_MARKS_EACH
+            and _count(PACK_MARKS, n, f) >= MIN_MARKS_EACH)
+
+
 # ---------- ผลลัพธ์ ----------
 @dataclass
 class Score:
@@ -274,6 +308,15 @@ def classify(page_text: str, title_text: str | None = None) -> DocType:
     best, second = scores[0], scores[1]
     margin = best.score - second.score
 
+    # เอกสารที่รวม Invoice กับ Packing List จะทำให้สองชนิดนี้คะแนนใกล้กันเสมอ
+    # (หัวเรื่องมีทั้งสองคำ ตารางมีทั้งราคาและน้ำหนัก) ต้องตัดสินก่อนถึงด่านส่วนต่าง
+    # มิฉะนั้นจะกลายเป็น "ไม่มั่นใจ" ทั้งที่จริง ๆ แล้วมั่นใจว่าเป็นทั้งสองอย่าง
+    if (best.score >= MIN_SCORE
+            and {best.code, second.code} <= {"invoice", "packing_list"}
+            and is_combined(page_text)):
+        return DocType("invoice_packing_list", "Invoice + Packing List (ใบเดียวกัน)",
+                       "ยืนยัน", best.score, margin, second.name_th, best.evidence)
+
     if best.score < MIN_SCORE:
         return DocType("unknown", "ไม่ทราบชนิด", "ต้องให้คนยืนยัน",
                        best.score, margin, second.name_th, best.evidence,
@@ -284,5 +327,8 @@ def classify(page_text: str, title_text: str | None = None) -> DocType:
                        best.score, margin, second.name_th, best.evidence,
                        note=f"{best.name_th} {best.score:.0f} vs {second.name_th} "
                             f"{second.score:.0f} ห่างกันแค่ {margin:.0f}")
-    return DocType(best.code, best.name_th, "ยืนยัน",
+    code, name = best.code, best.name_th
+    if code in ("invoice", "packing_list") and is_combined(page_text):
+        code, name = "invoice_packing_list", "Invoice + Packing List (ใบเดียวกัน)"
+    return DocType(code, name, "ยืนยัน",
                    best.score, margin, second.name_th, best.evidence)

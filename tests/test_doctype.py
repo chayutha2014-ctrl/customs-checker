@@ -5,7 +5,9 @@
 บทเรียนจาก tables.py: โค้ดที่ไม่มีเทสต์จะถอยหลังเสมอ
 """
 import sys, os, pytest
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+_here = os.path.dirname(os.path.abspath(__file__))
+for _p in ("..", os.path.join("..", "src")):
+    sys.path.insert(0, os.path.abspath(os.path.join(_here, _p)))
 from customs_checker.doctype import classify, normalize, despace
 
 
@@ -307,6 +309,34 @@ def test_ใบแจ้งหนี้ค่าระวางล่วงห�
     แล้วถอยหลังตอนเพิ่ม INVOICE เป็นคำหัวเรื่อง"""
     r = classify(PRE_INVOICE, title_text="MANDIGE LINE COMPANY LIMITED  PRE-INVOICE ( USD )")
     assert r.code == "freight_invoice" and r.status == "ยืนยัน", r
+
+
+# ---------- เอกสารที่รวม Invoice กับ Packing List ----------
+COMBINED = """
+VORETO INDUSTRY CO., LTD.
+COMMERCIAL INVOICE AND PACKING LIST
+INVOICE NO.: VRT-2608   DATE: 24/08/2026
+ITEM  DESCRIPTION  QTY  UNIT PRICE  AMOUNT  CTNS  N.W.(KGS)  G.W.(KGS)  CBM
+1  BASIN MIXER  100  27.1800  2,718.00  10  120.50  135.00  1.20
+TOTAL  304  1602  $26,947.32  3,841.26  4,750.64  24.27
+SAY TOTAL U.S.DOLLARS TWENTY SIX THOUSAND ...
+"""
+
+def test_เอกสารที่รวม_invoice_กับ_packing_list():
+    """ผู้ขายหลายรายทำใบเดียวมีทั้งราคาและน้ำหนัก ผู้ใช้ยืนยันว่าเจอเป็นปกติ
+    ต้องไม่บังคับให้เลือกข้างใดข้างหนึ่ง"""
+    r = classify(COMBINED, title_text="VORETO INDUSTRY CO., LTD.\nCOMMERCIAL INVOICE AND PACKING LIST")
+    assert r.code == "invoice_packing_list" and r.status == "ยืนยัน", r
+
+
+def test_invoice_ธรรมดา_ต้องไม่ถูกยกระดับ():
+    r = classify(INVOICE, title_text="MONTE-BIANCO DIAMOND APPLICATIONS CO., LTD.\nCOMMERCIAL INVOICE")
+    assert r.code == "invoice", r
+
+
+def test_packing_list_ธรรมดา_ต้องไม่ถูกยกระดับ():
+    r = classify(PACKING_LIST, title_text="FOSHAN XINYANG CERAMICS CO.,LTD.\nPACKING LIST")
+    assert r.code == "packing_list", r
 
 
 # ---------- หน้าที่อ่านไม่ได้ ต้องไม่ถูกเดา ----------

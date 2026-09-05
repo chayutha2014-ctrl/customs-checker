@@ -8,7 +8,7 @@ from itertools import combinations
 from statistics import median
 import re
 
-from .numbers import parse_number
+from .numbers import parse_number, is_unit
 
 TOTAL_LABELS = ["TOTAL", "รวม", "ยอดรวม", "GRAND TOTAL", "SAY TOTAL"]
 
@@ -101,6 +101,47 @@ def numeric_columns(rows, tol_factor=1.2, min_depth=2):
 def _col_x(col):
     return median(c.x1 for c in col.values())
 
+_GLUED = re.compile(r"^(?P<num>\d[\d.,]*)\s+(?P<junk>\S{1,4})$")
+
+
+def split_glued(rows, max_junk=4):
+    """แยกเซลล์ที่ OCR เชื่อมข้อความคนละช่องมาไว้ด้วยกัน แล้วหั่นกล่องตามสัดส่วน
+
+    ทำไมต้องแยก: numeric_columns() จัดคอลัมน์จากขอบขวาของเซลล์
+    เซลล์ "269.00 26" มีขอบขวาอยู่ที่เลขลำดับ ไม่ใช่ที่จำนวนเงิน
+    มันจึงถูกจัดเข้าคอลัมน์เลขลำดับ ทำให้คอลัมน์จำนวนเงินถูกฉีกเป็นสองคอลัมน์
+    analyze_invoice เลือกคอลัมน์จำนวนเงินได้คอลัมน์เดียว อีกครึ่งจึงหลุดหายเงียบ ๆ
+    (HUANYU ขาดบรรทัด 20 x 13.45 = 269.00 พอดี)
+
+    ไม่แยกเมื่อคำท้ายเป็นชื่อหน่วย เพราะ "150.00 MTR" คือตัวเลขเดียวที่มีหน่วยกำกับ
+    ไม่ใช่สองช่องที่ติดกัน
+
+    ตำแหน่งที่หั่นประมาณจากจำนวนตัวอักษร ซึ่งเพียงพอเพราะการจัดคอลัมน์
+    ใช้ระยะคลาดเคลื่อนราวหนึ่งเท่าของความสูงตัวอักษรอยู่แล้ว
+    """
+    out = []
+    for r in rows:
+        cells = []
+        for c in r.cells:
+            m = _GLUED.match(c.text)
+            if (m is None or len(m.group("junk")) > max_junk
+                    or is_unit(m.group("junk"))
+                    or parse_number(m.group("num")) is None):
+                cells.append(c)
+                continue
+            t = c.text
+            cut = m.end("num")
+            w = c.x1 - c.x0
+            n = len(t)
+            xa = c.x0 + w * cut / n
+            xb = c.x0 + w * m.start("junk") / n
+            cells.append(Cell(m.group("num"), c.x0, c.y0, xa, c.y1))
+            cells.append(Cell(m.group("junk"), xb, c.y0, c.x1, c.y1))
+        cells.sort(key=lambda c: c.x0)
+        out.append(Row(cells))
+    return out
+
+
 
 def find_product_triple(cols, tol=0.01, min_hits=2):
     """
@@ -180,8 +221,50 @@ def _guard_single_line(res, cols, ai, min_rows=3):
     return res
 
 
+def _digits(v):
+    """ตัวเลขล้วนของค่าหนึ่ง  662.70 -> "66270"   "$66270" -> "66270"   """
+    import re as _re
+    return _re.sub(r"\D", "", v if isinstance(v, str) else f"{float(v):.2f}")
+
+
+def recover_lines(rows, cols, qi, pi, ai, hits, min_digits=3, max_extra=3):
+    """แถวที่อ่าน จำนวน กับ ราคา ได้ แต่เซลล์จำนวนเงินเสียรูป
+
+    เสียรูปที่เจอจริงสองแบบ
+      170.7023   เลขลำดับ 23 ถูกเชื่อมท้ายโดยไม่มีช่องว่าง (HUANYU)
+      $66270     จุดทศนิยมหาย ของจริงคือ $662.70 (VORETO)
+
+    ทั้งสองแบบ 'ตัวเลขล้วน' ยังขึ้นต้นตรงกับ จำนวน x ราคา
+    จึงยืนยันได้โดยไม่ต้องเชื่อ OCR ของเซลล์ที่เสีย
+    ส่วนกรณีที่เอกสารคิดเลขผิดจริง ตัวเลขจะไม่ขึ้นต้นตรงกัน แล้วจะไม่ถูกกู้
+    การตรวจจับข้อผิดพลาดของเอกสารจึงไม่เสียไป
+    """
+    out = []
+    for ri in sorted(set(cols[qi]) & set(cols[pi])):
+        if ri in hits:
+            continue
+        q, p = cols[qi][ri].number(), cols[pi][ri].number()
+        if not q or not p:
+            continue
+        amt = round(q * p, 2)
+        want = _digits(amt)
+        if len(want) < min_digits:
+            continue
+        for c in rows[ri].cells:
+            if c.number() is None:
+                continue
+            got = _digits(c.text)
+            if got.startswith(want) and 0 <= len(got) - len(want) <= max_extra:
+                out.append({"row": ri, "qty": q, "price": p, "amount": amt,
+                            "amount_read": c.number(), "cell": c.text,
+                            "recovered": True})
+                break
+    return out
+
+
 def analyze_invoice(rows):
     """วิเคราะห์ตาราง Invoice ด้วยความสอดคล้องของตัวเลข"""
+    rows = split_glued(rows)
     res = {"lines": [], "computed": None, "printed": None,
            "missing_lines": [], "gap": None, "status": "ไม่พบตาราง",
            "n_numeric_cols": 0}
@@ -198,16 +281,32 @@ def analyze_invoice(rows):
         return res
 
     qi, pi, ai, hits = found
+    res["repaired"] = []
     for ri in sorted(hits):
-        res["lines"].append({"row": ri,
-                             "qty": cols[qi][ri].number(),
-                             "price": cols[pi][ri].number(),
-                             "amount": cols[ai][ri].number()})
+        q, p = cols[qi][ri].number(), cols[pi][ri].number()
+        read = cols[ai][ri].number()
+        amt = round(q * p, 2)
+        # ใช้ผลคูณเป็นจำนวนเงิน เพราะเป็นเลขคณิตที่แน่นอน
+        # ส่วนเซลล์ที่อ่านมาอาจมีอักขระอื่นติดท้าย เช่น 415.802 ที่จริงคือ 415.80
+        res["lines"].append({"row": ri, "qty": q, "price": p,
+                             "amount": amt, "amount_read": read})
+        if read is not None and abs(read - amt) > 0.005:
+            res["repaired"].append({"row": ri, "cell": cols[ai][ri].text,
+                                    "read": read, "used": amt,
+                                    "why": "เซลล์จำนวนเงินมีอักขระอื่นติดมา"})
+
+    got = recover_lines(rows, cols, qi, pi, ai, hits)
+    for line in got:
+        res["lines"].append(line)
+        res["repaired"].append({"row": line["row"], "cell": line["cell"],
+                                "read": line["amount_read"], "used": line["amount"],
+                                "why": "จำนวนเงินเสียรูป ยืนยันด้วย จำนวน x ราคา"})
+    res["lines"].sort(key=lambda l: l["row"])
+    used = set(hits) | {l["row"] for l in got}
     computed = round(sum(l["amount"] for l in res["lines"]), 2)
     res["computed"] = computed
-
     outside = [c.number() for ri, c in cols[ai].items()
-               if ri not in hits and c.number()]
+               if ri not in used and c.number()]
     res["other_totals"] = sorted(set(outside), reverse=True)[:5]
 
     total, extra = reconcile(computed, outside)

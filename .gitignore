@@ -13,3 +13,7 @@ __pycache__/
 .pytest_cache/
 .page_cache.json
 .page_cache.json
+
+*.bak
+*.bak2
+docs_out/_box_cache.json.bak
