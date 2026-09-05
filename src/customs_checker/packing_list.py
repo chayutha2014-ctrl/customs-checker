@@ -253,7 +253,8 @@ def cross_check(columns: list[ColumnTotal], texts: list[TextTotal],
 def analyze_packing_list(rows, text: str = "") -> PackingList:
     """อ่าน Packing List จากแถวที่จัดกลุ่มแล้ว + ข้อความทั้งหน้า"""
     res = PackingList()
-    cols = numeric_columns(numeric_rows(rows))
+    clean = numeric_rows(rows)
+    cols = numeric_columns(clean)
     if len(cols) < 2:
         res.status = "ไม่พบตารางตัวเลข"
         return res
@@ -285,10 +286,23 @@ def analyze_packing_list(rows, text: str = "") -> PackingList:
     res.columns = column_totals(cols, ri, agree)
     n_solid = sum(1 for c in res.columns if not c.trivial)
     if n_solid < MIN_COLS_AGREE:
+        # ตารางที่มีบรรทัดสินค้าบรรทัดเดียว ยอดรวมย่อมเท่ากับบรรทัดนั้นเสมอ
+        # เลขคณิตจึงยืนยันอะไรไม่ได้ ต้องหาหลักฐานอีกทางที่ไม่เกี่ยวกัน
+        # หลักฐานนั้นคือแถวนั้นเขียนคำว่ายอดรวมไว้เอง
+        # (SKM_450i26090410270 หน้า 3 — r12 ขึ้นต้นว่า "TOTAL:" ตรงกันครบ 5 คอลัมน์)
+        labeled = 0 <= ri < len(clean) and clean[ri].is_total_row()
+        if labeled and len(res.columns) >= MIN_COLS_AGREE:
+            res.issues = cross_check(res.columns, res.texts)
+            n_line = len({r for c in res.columns for r in c.line_rows})
+            res.status = (
+                f"ตารางมีบรรทัดสินค้า {n_line} บรรทัด ผลรวมยืนยันด้วยเลขคณิตไม่ได้ "
+                f"แต่แถวนี้เขียนว่ายอดรวม และตรงกันครบ {len(res.columns)} คอลัมน์"
+                + (f" | พบข้อขัดแย้ง {len(res.issues)} จุด" if res.issues else ""))
+            return res
         res.total_row = None
         res.columns = []
         res.status = ("แถวรวมลงตัวจากคอลัมน์ที่มีบรรทัดเดียวเท่านั้น "
-                      "เชื่อไม่ได้ ต้องให้คนตรวจ")
+                      "และแถวนั้นไม่ได้เขียนว่ายอดรวม เชื่อไม่ได้ ต้องให้คนตรวจ")
         return res
 
     res.issues = cross_check(res.columns, res.texts)
