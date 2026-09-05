@@ -157,6 +157,29 @@ def reconcile(computed, unmatched, tol=0.02, max_extra=3):
     return None, []
 
 
+def _guard_single_line(res, cols, ai, min_rows=3):
+    """ด่านกันข้อผิดพลาดแบบเงียบ — ห้ามยืนยันเมื่อจับได้บรรทัดเดียวจากตารางใหญ่
+
+    ถ้าคอลัมน์จำนวนเงินมีตัวเลขหลายแถว แต่จับความสัมพันธ์
+    ปริมาณ x ราคา = จำนวนเงิน ได้เพียงบรรทัดเดียว แปลว่าน่าจะระบุคอลัมน์ผิด
+    แล้วไปเจอคู่ที่คูณกันลงตัวโดยบังเอิญ ห้ามรายงานว่า "ยืนยัน" เด็ดขาด
+
+    ที่มา: เคส VORETO ราคาต่อหน่วย 4 ทศนิยม (27.1800) ถูก parser รุ่นเก่าอ่านเป็น
+    271,800 ตารางจึงยุบเหลือคู่บังเอิญคู่เดียว แล้วระบบรายงานว่า
+    "ยืนยันด้วยยอดพิมพ์ 3.00" ทั้งที่ยอดจริงคือ 118.23
+    เป็นข้อผิดพลาดแบบเงียบเพียงครั้งเดียวของโปรเจกต์นี้
+    """
+    if (len(res["lines"]) == 1 and 0 <= ai < len(cols)
+            and len(cols[ai]) > min_rows):
+        res["printed"] = None
+        res["missing_lines"] = []
+        res["computed"] = round(sum(l["amount"] for l in res["lines"]), 2)
+        res["status"] = ("จับได้เพียงบรรทัดเดียวจากตารางหลายแถว "
+                         "อาจอ่านคอลัมน์ผิด ต้องให้คนตรวจ")
+        res["guard"] = "single_line_in_big_table"
+    return res
+
+
 def analyze_invoice(rows):
     """วิเคราะห์ตาราง Invoice ด้วยความสอดคล้องของตัวเลข"""
     res = {"lines": [], "computed": None, "printed": None,
@@ -209,4 +232,5 @@ def analyze_invoice(rows):
             res["status"] = "ยอดพิมพ์กับยอดคำนวณไม่ตรงกัน"
         else:
             res["status"] = "ไม่พบยอดพิมพ์ให้เทียบ"
+    _guard_single_line(res, cols, ai)
     return res

@@ -11,3 +11,5 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+.page_cache.json
+.page_cache.json
