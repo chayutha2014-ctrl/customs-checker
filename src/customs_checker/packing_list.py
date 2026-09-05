@@ -56,8 +56,14 @@ class ColumnTotal:
 def find_total_row(cols, tol: float = TOL, min_cols: int = MIN_COLS_AGREE):
     """หาแถวรวมด้วยเลขคณิตล้วน
 
-    ทุกคอลัมน์ทุกแถว ถามว่า "ค่านี้เท่ากับผลบวกของค่าที่เหลือในคอลัมน์เดียวกันหรือไม่"
+    ทุกคอลัมน์ทุกแถว ถามว่า "ค่านี้เท่ากับผลบวกของค่าที่อยู่ **เหนือมัน** ในคอลัมน์เดียวกันหรือไม่"
     แถวที่ได้เสียงจากหลายคอลัมน์ที่สุดคือแถวรวม
+
+    ที่ต้องนับเฉพาะแถวเหนือแถวรวม เพราะท้ายกระดาษมีตัวเลขที่ไม่ใช่บรรทัดสินค้า
+    และมักอยู่ตรงกับคอลัมน์พอดี เช่นของ VORETO
+      版本号：1.1     ถูกอ่านเป็น 1.1 เข้าคอลัมน์น้ำหนักสุทธิ ทำให้เกินยอดรวม 1.10
+      Version: V.01  ถูกอ่านเป็น 1   เข้าคอลัมน์จำนวน       ทำให้เกินยอดรวม 1.00
+    แถวรวมคือผลบวกของบรรทัดที่อยู่เหนือมันตามนิยาม การนับแถวใต้มันจึงผิดตั้งแต่ต้น
 
     ต้องมีอย่างน้อย min_cols คอลัมน์เห็นตรงกัน มิฉะนั้นคืน None
     เพราะคอลัมน์เดียวอาจลงตัวโดยบังเอิญ (หลักเดียวกับด่านกันข้อผิดเงียบใน analyze_invoice)
@@ -71,7 +77,7 @@ def find_total_row(cols, tol: float = TOL, min_cols: int = MIN_COLS_AGREE):
         if len(nums) < 2:
             continue
         for ri, total in nums.items():
-            rest = [v for r, v in nums.items() if r != ri]
+            rest = [v for r, v in nums.items() if r < ri]
             if not rest:
                 continue
             if abs(sum(rest) - total) <= max(tol, abs(total) * 1e-6):
@@ -93,7 +99,8 @@ def column_totals(cols, total_row: int, agree: list[int]) -> list[ColumnTotal]:
         col = cols[ci]
         nums = {ri: c.number() for ri, c in col.items() if c.number() is not None}
         printed = nums[total_row]
-        lines = {r: v for r, v in nums.items() if r != total_row}
+        # เหตุผลเดียวกับใน find_total_row — นับเฉพาะบรรทัดเหนือแถวรวม
+        lines = {r: v for r, v in nums.items() if r < total_row}
         out.append(ColumnTotal(
             col=ci, x=_col_x(col),
             line_rows=sorted(lines), values=[lines[r] for r in sorted(lines)],
