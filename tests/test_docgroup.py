@@ -84,10 +84,25 @@ def test_เลขแผ่นเกินจริง_ต้องไม่ร�
     assert page_marker("1 of 300") is None
 
 
-def test_ตัวบอกแผ่นขัดกัน_ต้องไม่ฟันธง():
+def test_ตัวบอกแผ่นเสมอกัน_ต้องไม่ฟันธง():
     from customs_checker.docgroup import expected_sheets
     n, why = expected_sheets([(1, 3, "เปล่า"), (2, 8, "เปล่า")])
     assert n is None and "ขัดกัน" in why
+
+
+def test_ocr_อ่านเลขแผ่นผิดหนึ่งใบ_ใช้เสียงข้างมาก():
+    """เคสจริง SKM_450i26090315181: Form E 3 แผ่น OCR อ่านได้ 1/8, 2/3, 3/3
+    เลข 8 คือ 3 ที่อ่านผิด — เสียงข้างมากต้องชนะ"""
+    from customs_checker.docgroup import expected_sheets
+    n, why = expected_sheets([(1, 8, "เปล่า"), (2, 3, "เปล่า"), (3, 3, "เปล่า")])
+    assert n == 3 and "เสียงข้างมาก" in why
+
+
+def test_เอกสารขาดจริง_ต้องยังเตือน():
+    """ถ้าทุกแผ่นบอกตรงกันว่ามี 8 แผ่น แต่ได้มา 3 ต้องเตือนว่าไม่ครบ"""
+    from customs_checker.docgroup import expected_sheets
+    n, why = expected_sheets([(1, 8, "เปล่า"), (2, 8, "เปล่า"), (3, 8, "เปล่า")])
+    assert n == 8 and why == ""
 
 
 def test_ตัวบอกแบบชัดเจนชนะแบบเปล่า():

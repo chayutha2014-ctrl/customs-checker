@@ -84,17 +84,26 @@ def page_marker(text: str):
 def expected_sheets(marks: list) -> tuple[int | None, str]:
     """สรุปจำนวนแผ่นที่เอกสารพิมพ์บอกไว้ จากตัวบอกทุกตัวที่เจอในฉบับนั้น
 
-    ถ้าตัวบอกขัดกันเอง ให้ตอบว่าไม่รู้ ดีกว่าฟันธงเลขที่ผิด
+    OCR อ่านเลขผิดได้ (3 กับ 8 สลับกันบ่อย) จึงใช้เสียงข้างมาก
+    ตัวอย่างจริง: Form E 3 แผ่น อ่านได้ 1/8, 2/3, 3/3 -> ตอบ 3
+    แต่ถ้าไม่มีเสียงข้างมากชัดเจน ให้ตอบว่าไม่รู้ ดีกว่าฟันธงเลขที่ผิด
     """
     if not marks:
         return None, ""
     explicit = [m for m in marks if m[2] == "ชัดเจน"]
     pool = explicit or marks
-    totals = {m[1] for m in pool}
-    if len(totals) == 1:
-        return totals.pop(), ""
-    return None, ("ตัวเลขลำดับแผ่นในเอกสารขัดกันเอง (" +
-                  ", ".join(f"{a}/{b}" for a, b, _ in pool) + ") เชื่อไม่ได้")
+    counts: dict[int, int] = {}
+    for _, b, _k in pool:
+        counts[b] = counts.get(b, 0) + 1
+    if len(counts) == 1:
+        return next(iter(counts)), ""
+
+    top = max(counts, key=lambda k: counts[k])
+    others = [v for k, v in counts.items() if k != top]
+    seen = ", ".join(f"{a}/{b}" for a, b, _ in pool)
+    if counts[top] >= 2 and counts[top] > max(others):
+        return top, f"ตัวเลขลำดับแผ่นไม่ตรงกันทุกแผ่น ({seen}) ใช้เสียงข้างมาก"
+    return None, f"ตัวเลขลำดับแผ่นในเอกสารขัดกันเอง ({seen}) เชื่อไม่ได้"
 
 
 # คำที่บอกว่า OCR เอาข้อความสองคอลัมน์มาต่อกันเป็นบรรทัดเดียว
@@ -306,13 +315,15 @@ def group_pages(pages: list[dict]) -> list[Doc]:
     # ตรวจความครบ "ตอนจบ" เท่านั้น — ถ้าเช็คระหว่างทางจะฟ้องผิดทุกแผ่นที่ยังไม่ครบ
     for d in docs:
         exp, why = expected_sheets(d.marks)
-        if why:
-            d.status = "ตรวจสอบ"
-            d.note = (d.note + " | " if d.note else "") + why
-        elif exp:
+        if exp:
             d.expected = exp
             d.note = (d.note + " | " if d.note else "") + f"เอกสารพิมพ์ว่ามี {exp} แผ่น"
+            if why:
+                d.note += f" ({why})"
             if exp != len(d.pages):
                 d.status = "ตรวจสอบ"
                 d.note += f" แต่ได้มา {len(d.pages)} แผ่น"
+        elif why:
+            d.status = "ตรวจสอบ"
+            d.note = (d.note + " | " if d.note else "") + why
     return docs
