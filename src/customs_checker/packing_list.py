@@ -90,6 +90,8 @@ class ColumnTotal:
     computed: float                # ผลบวกของค่ารายบรรทัด
     printed: float                 # ค่าที่อยู่ในแถวรวม
     trivial: bool = False          # มีค่ารายบรรทัดเดียว ผลรวมจึงลงตัวโดยปริยาย
+    unit: str = ""                 # หน่วยที่เขียนติดกับค่าในแถวรวม เช่น CTNS KGS
+    label: str = ""                # ป้ายชื่อจากยอดรวมที่เขียนเป็นข้อความใต้ตาราง
 
 
 def find_total_row(cols, tol: float = TOL, min_cols: int = MIN_COLS_AGREE):
@@ -132,7 +134,31 @@ def find_total_row(cols, tol: float = TOL, min_cols: int = MIN_COLS_AGREE):
     return ri, votes[ri]
 
 
-def column_totals(cols, total_row: int, agree: list[int]) -> list[ColumnTotal]:
+def _unit_beside(rows, ri, cell):
+    """หน่วยที่เขียนติดกับค่าในแถวรวม เช่น `2006 CTNS`
+
+    split_units() แยกหน่วยออกมาเป็นเซลล์ของตัวเองแล้ว หน่วยจึงอยู่ถัดไปทางขวา
+    ของเซลล์ค่าเสมอ ใช้ตั้งชื่อคอลัมน์ได้โดยไม่ต้องอ่านหัวตาราง
+    ซึ่งสำคัญเพราะหัวตารางที่ OCR อ่านมามักเพี้ยนจนเทียบคำไม่ได้
+    (VORETO ได้ `Quendlry | UnktPrice | Weig(KGS)`)
+    """
+    if not (0 <= ri < len(rows)) or cell is None:
+        return ""
+    best = None
+    for c in rows[ri].cells:
+        if c.number() is not None:
+            continue
+        t = c.text.strip().upper().strip(".:,")
+        if t not in UNITS:
+            continue
+        gap = c.x0 - cell.x1
+        if -2.0 <= gap <= max(cell.h, 1.0) * 2 and (best is None or gap < best[0]):
+            best = (gap, t)
+    return best[1] if best else ""
+
+
+def column_totals(cols, total_row: int, agree: list[int],
+                  rows=None) -> list[ColumnTotal]:
     out = []
     for ci in agree:
         col = cols[ci]
@@ -144,8 +170,132 @@ def column_totals(cols, total_row: int, agree: list[int]) -> list[ColumnTotal]:
             col=ci, x=_col_x(col),
             line_rows=sorted(lines), values=[lines[r] for r in sorted(lines)],
             computed=round(sum(lines.values()), 4), printed=printed,
-            trivial=len(lines) < 2))
+            trivial=len(lines) < 2,
+            unit=_unit_beside(rows, total_row, col.get(total_row)) if rows else ""))
     return sorted(out, key=lambda c: c.x)
+
+
+# คำที่บ่งบอกว่าเป็น "ชื่อของสิ่งที่วัด" จริง ๆ ไม่ใช่การสะกดจำนวนเป็นตัวหนังสือ
+# ถ้าไม่กรอง `SAY TOTAL FOUR HUNDRED (400) CTNS ONLY` จะให้ป้ายว่า "FOUR HUNDRED"
+NAME_WORDS = ("WEIGHT", "MEASUREMENT", "MEASURE", "VOLUME", "QUANTITY", "QTY",
+              "CARTON", "CTNS", "CTN", "PACKAGE", "PKGS", "PALLET", "PLTS",
+              "PIECES", "PCS", "NET", "GROSS", "N.W", "G.W", "CBM",
+              "น้ำหนัก", "ปริมาตร", "จำนวน", "หีบห่อ")
+
+
+def _is_name(label):
+    up = (label or "").upper()
+    return any(w in up for w in NAME_WORDS)
+
+
+WEIGHT_UNITS = ("KGS", "KG", "KGM")
+
+
+def _name_weight_pair(columns):
+    """แยกน้ำหนักสุทธิกับน้ำหนักรวม ด้วยกฎทางกายภาพ
+
+    น้ำหนักรวม = น้ำหนักสุทธิ + บรรจุภัณฑ์ จึงมากกว่าเสมอ
+    ใช้ได้เมื่อมีคอลัมน์หน่วยน้ำหนักสองคอลัมน์พอดี และยังไม่มีป้ายชื่อจากข้อความ
+
+    หลักฐานนี้อ่อนกว่าการจับคู่ด้วยค่าจากข้อความใต้ตาราง จึงบันทึกที่มาไว้ด้วย
+    ถ้าค่าเท่ากันแปลว่าแยกไม่ออก ต้องไม่เดา
+    """
+    kg = [c for c in columns
+          if (c.unit or "").upper() in WEIGHT_UNITS and not c.label]
+    if len(kg) != 2:
+        return []
+    lo, hi = sorted(kg, key=lambda c: c.printed)
+    if abs(hi.printed - lo.printed) <= TOL:
+        return ["สองคอลัมน์น้ำหนักมีค่าเท่ากัน แยกสุทธิกับรวมไม่ได้ ต้องให้คนดู"]
+    lo.label, hi.label = "NET WEIGHT", "GROSS WEIGHT"
+    return [f"แยกน้ำหนักสุทธิ ({lo.printed:,g}) กับน้ำหนักรวม ({hi.printed:,g}) "
+            f"จากกฎที่ว่าน้ำหนักรวมมากกว่าสุทธิเสมอ ไม่ได้อ่านจากป้ายชื่อในเอกสาร"]
+
+
+def _unit_row_names(columns, rows, first_line_row):
+    """ชื่อจากแถวที่มีแต่หน่วยล้วนในหัวตาราง
+
+    ของจริง SKM_450i26090410270 หน้า 3
+      r9   ITEM NO. | PACKAGES... | G.W. | N.W. | VOL
+      r10                           KGS  | KGS  | CBM
+    แถวหน่วยแบบนี้ความหมายไม่กำกวม เหลือแค่ต้องจับให้ตรงคอลัมน์
+
+    หลักฐานนี้อาศัยตำแหน่ง ไม่ใช่เลขคณิต จึงอ่อนกว่าสองทางแรก
+    ใช้ต่อเมื่อคอลัมน์นั้นยังไม่มีชื่อ และจับคู่ได้แบบไม่กำกวมเท่านั้น
+    """
+    if not rows:
+        return []
+    cands = []
+    for ri in range(min(first_line_row, len(rows))):
+        cells = [c for c in rows[ri].cells if c.number() is None]
+        if len(cells) < 2 or len(cells) != len(rows[ri].cells):
+            continue
+        us = [c for c in cells if c.text.strip().upper().strip(".:,") in UNITS]
+        if len(us) == len(cells):
+            cands.append(us)
+    if not cands:
+        return []
+    marks = cands[-1]                      # แถวหน่วยที่อยู่ใกล้ตารางที่สุด
+    named = []
+    for c in columns:
+        if c.unit or c.label:
+            continue
+        near = sorted(marks, key=lambda m: abs((m.x0 + m.x1) / 2 - c.x))
+        if not near:
+            continue
+        best = near[0]
+        span = max(best.x1 - best.x0, 1.0)
+        if abs((best.x0 + best.x1) / 2 - c.x) > span * 2.5:
+            continue
+        if len(near) > 1 and abs(
+                abs((near[1].x0 + near[1].x1) / 2 - c.x)
+                - abs((best.x0 + best.x1) / 2 - c.x)) < span * 0.5:
+            continue                       # ใกล้พอกันสองอัน ไม่เดา
+        c.unit = best.text.strip().upper().strip(".:,")
+        named.append(c)
+    if named:
+        return [f"ตั้งชื่อ {len(named)} คอลัมน์จากแถวหน่วยในหัวตาราง "
+                f"ซึ่งอาศัยตำแหน่ง ไม่ใช่เลขคณิต ควรตรวจซ้ำ"]
+    return []
+
+
+def name_columns(columns, texts, tol: float = TOL, rows=None):
+    """ตั้งชื่อคอลัมน์ด้วยเลขคณิต ไม่ใช่ด้วยคำในหัวตาราง
+
+    ยอดรวมที่เขียนเป็นข้อความใต้ตารางบอกทั้งค่าและความหมาย
+      TOTAL GROSS WEIGHT: 3424.00KGS  ->  คอลัมน์ที่รวมได้ 3424 คือน้ำหนักรวม
+    จับคู่ด้วยค่า จึงไม่ขึ้นกับว่าหัวตารางสะกดถูกหรือไม่
+
+    คืนรายการข้อสังเกตที่ต้องให้คนดู เมื่อสองคอลัมน์ได้ชื่อเดียวกัน
+    """
+    notes = []
+    for c in columns:
+        for t in texts:
+            if not _is_name(t.label):
+                continue
+            if abs(t.value - c.printed) <= tol or abs(t.value - c.computed) <= tol:
+                c.label = t.label
+                if not c.unit:
+                    c.unit = t.unit
+                break
+
+    first_line = min((r for c in columns for r in c.line_rows), default=0)
+    notes += _unit_row_names(columns, rows, first_line)
+    notes += _name_weight_pair(columns)
+
+    seen = {}
+    for c in columns:
+        key = (c.label or "", c.unit or "")
+        if key == ("", ""):
+            continue
+        seen.setdefault(key, []).append(c)
+    for (label, unit), group in seen.items():
+        if len(group) > 1:
+            xs = ", ".join(f"x={c.x:.0f} รวม {c.printed:,g}" for c in group)
+            notes.append(
+                f"{len(group)} คอลัมน์ได้ชื่อเดียวกัน '{label or unit}' ({xs}) "
+                f"— แยกไม่ออกว่าคอลัมน์ไหนคืออะไร ต้องให้คนดู")
+    return notes
 
 
 # ---------------- ยอดรวมที่เขียนเป็นข้อความใต้ตาราง ----------------
@@ -240,6 +390,7 @@ class PackingList:
     columns: list[ColumnTotal] = field(default_factory=list)
     texts: list[TextTotal] = field(default_factory=list)
     issues: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)   # ข้อสังเกตที่ไม่ถึงขั้นขัดแย้ง
     status: str = "ยังไม่ได้อ่าน"
 
     @property
@@ -322,7 +473,7 @@ def analyze_packing_list(rows, text: str = "") -> PackingList:
         return res
 
     res.total_row = ri
-    res.columns = column_totals(cols, ri, agree)
+    res.columns = column_totals(cols, ri, agree, clean)
     n_solid = sum(1 for c in res.columns if not c.trivial)
     if n_solid < MIN_COLS_AGREE:
         # ตารางที่มีบรรทัดสินค้าบรรทัดเดียว ยอดรวมย่อมเท่ากับบรรทัดนั้นเสมอ
@@ -332,6 +483,7 @@ def analyze_packing_list(rows, text: str = "") -> PackingList:
         labeled = 0 <= ri < len(clean) and clean[ri].is_total_row()
         if labeled and len(res.columns) >= MIN_COLS_AGREE:
             res.issues = cross_check(res.columns, res.texts)
+            res.notes = name_columns(res.columns, res.texts, rows=clean)
             n_line = len({r for c in res.columns for r in c.line_rows})
             res.status = (
                 f"ตารางมีบรรทัดสินค้า {n_line} บรรทัด ผลรวมยืนยันด้วยเลขคณิตไม่ได้ "
@@ -345,6 +497,7 @@ def analyze_packing_list(rows, text: str = "") -> PackingList:
         return res
 
     res.issues = cross_check(res.columns, res.texts)
+    res.notes = name_columns(res.columns, res.texts, rows=clean)
     n_line = len({r for c in res.columns for r in c.line_rows})
     res.status = (f"ผลรวมลงตัว {len(res.columns)} คอลัมน์ {n_line} บรรทัด"
                   + (f" | พบข้อขัดแย้ง {len(res.issues)} จุด" if res.issues else ""))

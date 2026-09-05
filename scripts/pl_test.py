@@ -54,6 +54,7 @@ def main(prefix="", debug=False, take_all=False, join=True):
     docs = pl_documents(cache, prefix, take_all, join)
 
     n_doc = n_ok = n_issue = n_fail = n_comb = n_multi = 0
+    n_cols = n_named = 0
     for label, keys, rows, text, c in docs:
         n_doc += 1
         if c.code == "invoice_packing_list":
@@ -71,11 +72,14 @@ def main(prefix="", debug=False, take_all=False, join=True):
             if debug:
                 debug_columns(rows)
         else:
+            n_cols += len(r.columns)
+            n_named += sum(1 for c in r.columns if c.label or c.unit)
             for col in r.columns:
                 mark = " (บรรทัดเดียว)" if col.trivial else ""
                 vals = ", ".join(f"{v:,g}" for v in col.values[:5])
                 more = f" ...อีก {len(col.values) - 5}" if len(col.values) > 5 else ""
-                print(f"    คอลัมน์ x={col.x:>6.0f}  [{vals}{more}]  "
+                name = col.label or col.unit or "ยังไม่รู้ว่าคอลัมน์อะไร"
+                print(f"    {name:<22} x={col.x:>6.0f}  [{vals}{more}]  "
                       f"รวม {col.computed:,g} = ยอดพิมพ์ {col.printed:,g}{mark}")
             if r.issues:
                 n_issue += 1
@@ -83,6 +87,8 @@ def main(prefix="", debug=False, take_all=False, join=True):
                 n_ok += 1
         for t in r.texts:
             print(f"    ข้อความ: {t.value:,g} {t.unit:<5} [{t.matched}]  «{t.raw[:60]}»")
+        for n in r.notes:
+            print(f"    หมายเหตุ {n}")
         for i in r.issues:
             print(f"    ⚠ {i}")
 
@@ -90,6 +96,7 @@ def main(prefix="", debug=False, take_all=False, join=True):
     print(f"Packing List ที่พบ {n_doc} ฉบับ (ใบรวมกับ Invoice {n_comb} · "
           f"หลายแผ่น {n_multi})  | ผลรวมลงตัวและไม่มีข้อขัดแย้ง {n_ok}  "
           f"| พบข้อขัดแย้ง {n_issue}  | อ่านตารางไม่ได้ {n_fail}")
+    print(f"คอลัมน์ที่ตั้งชื่อได้ {n_named}/{n_cols}")
 
 
 if __name__ == "__main__":
