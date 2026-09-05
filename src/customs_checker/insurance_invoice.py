@@ -53,11 +53,17 @@ _DATE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
 
 
 def find_policy_no(rows):
+    r"""ห้ามลบช่องว่างก่อนค้นหา
+
+    การลบช่องว่างทำให้ "00/2026-00773459-CMI 44.38" กลายเป็น
+    "00/2026-00773459-CMI44.38" แล้วขอบคำหลัง CMI หายไปเพราะติดเลข 44 ทันที
+    รูปแบบมี \s* รองรับช่องว่างอยู่แล้ว ไม่ต้องลบ
+    """
     for r in rows:
         t = r.text() if hasattr(r, "text") else str(r)
-        m = _POLICY.search(t.upper().replace(" ", ""))
+        m = _POLICY.search(t.upper())
         if m:
-            return m.group(1)
+            return re.sub(r"\s+", "", m.group(1))
     return None
 
 

@@ -153,3 +153,42 @@ def test_มีหลายชุดที่เข้าเงื่อนไ�
 
 def test_หาภาษีหักณที่จ่ายไม่เจอต้องคืนค่าว่าง():
     assert find_wht([100.0, 200.0], 500.0, 535.0) == (None, None, None)
+
+
+# ---------- ข้อความแบบที่ Row.text() ให้จริง ----------
+# บทเรียน: dump_type.py แสดงเซลล์คั่นด้วย "|" แต่ Row.text() คั่นด้วยช่องว่าง
+# เทสต์ที่คัดลอกจากหน้าจอจึงไม่ได้ทดสอบเส้นทางเดียวกับที่ใช้จริง
+# เครื่องหมาย "|" บังเอิญทำให้ขอบคำเป็นจริง เทสต์เลยผ่านทั้งที่โค้ดพัง
+# ข้อความข้างล่างนี้คัดจาก Row.text() ของจริง ไม่ใช่จากหน้าจอ
+
+REAL_POLICY_ROWS = [
+    ("00/2026-00773459-CMI 44.38", "00/2026-00773459-CMI"),
+    ("00/2026-00773910-CMI rEMILUeRRLU 35.14", "00/2026-00773910-CMI"),
+    ("00/2026-00773924-CMI mehyainnn 35.21", "00/2026-00773924-CMI"),
+    ("00/2026-O0773917-CMI 80.29", "00/2026-O0773917-CMI"),
+    ("SCHEDULE Policy No. 00/2026-00773918-CMI", "00/2026-00773918-CMI"),
+    ("00/2026-00773023-CMI rtyiluultgtu 35.21", "00/2026-00773023-CMI"),
+]
+
+
+@pytest.mark.parametrize("text, want", REAL_POLICY_ROWS)
+def test_เลขที่กรมธรรม์จากข้อความจริง(text, want):
+    """เคยอ่านไม่ได้เลยทั้ง 6 ใบ เพราะโค้ดลบช่องว่างก่อนค้นหา
+    ทำให้ CMI ไปติดกับเลขจำนวนเงินทันที ขอบคำจึงไม่เป็นจริง"""
+    assert find_policy_no([text]) == want
+
+
+def test_ไม่จับคำว่า_CMI_ที่เป็นชื่อประเภทกรมธรรม์():
+    """g/ TypeofPolicy/Others CMI-an Stamp Duty 4.00 ไม่ใช่เลขที่กรมธรรม์"""
+    assert find_policy_no(
+        ["g/ TypeofPolicy/Others CMI-an Stamp Duty 4.00"]) is None
+
+
+def test_ตัวเลขอ่านได้เหมือนกันไม่ว่าจะคั่นด้วยอะไร():
+    """เส้นทางจริงคั่นด้วยช่องว่าง ต้องให้ผลเท่ากับที่คั่นด้วย |"""
+    pipe = [line for line in DEVES_1]
+    space = [line.replace(" | ", " ") for line in DEVES_1]
+    a = analyze_insurance_invoice(pipe)
+    b = analyze_insurance_invoice(space)
+    assert (a.premium, a.stamp, a.vat, a.total) == (b.premium, b.stamp, b.vat, b.total)
+    assert a.sum_insured == b.sum_insured
