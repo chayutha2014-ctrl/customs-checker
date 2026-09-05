@@ -108,7 +108,7 @@ def main():
             print(f"  ต่อ {len(keys)} แผ่นเป็นฉบับเดียว")
         print(f"  {r.status}")
 
-        clean = numeric_rows(rows)
+        clean = numeric_rows(rows)      # ต้องใช้ชุดเดียวกับตัวอ่าน เลขแถวจะได้ตรงกัน
         cols = numeric_columns(clean)
         nm = near_miss(cols)
         if not nm:
@@ -118,7 +118,7 @@ def main():
             print(f"  คอลัมน์ x={x:>6.0f} {n:>3} ค่า  "
                   f"ถ้าแถว {ri} ({total:,g}) เป็นยอดรวม  "
                   f"ผลบวกของแถวเหนือมัน {rest:,g}  -> {tag}")
-            for h in explain_gap(gap, rows, cols):
+            for h in explain_gap(gap, clean, cols):
                 print(f"      ค่าที่ขาดตรงกับ {h}")
 
         bad = unreadable_cells(rows)

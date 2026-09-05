@@ -15,9 +15,48 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .tables import numeric_columns, _col_x, Row
+from .tables import numeric_columns, _col_x, Row, Cell
+from .numbers import parse_number
 
 MAX_TOKENS_IN_NUMERIC_CELL = 2   # เซลล์ตัวเลขจริงมีได้ไม่เกิน "ค่า + หน่วย"
+
+
+_NUM_WITH_UNIT = re.compile(
+    r"^(?P<num>\d[\d.,]*)\s*(?P<unit>[A-Za-z][A-Za-z0-9]{0,4})$")
+
+
+def split_units(rows):
+    """แยกหน่วยออกจากตัวเลข แล้วหดกล่องให้เหลือเฉพาะส่วนที่เป็นตัวเลข
+
+    ทำไมต้องมี: numeric_columns() จัดคอลัมน์จากขอบขวาของเซลล์
+    บรรทัดสินค้ามักเขียนตัวเลขเปล่า แต่แถวรวมเขียนหน่วยติดมาด้วย
+    เซลล์แถวรวมจึงกว้างกว่าและขอบขวาเลื่อนไปตรงกับคอลัมน์ถัดไป
+
+    ของจริง SKM_450i26090315172 หน้า 8
+      บรรทัดสินค้า  1000       167        1,767.33
+      แถวรวม        27526PCS   2006CTNS   16123.02KGS
+    ทั้งแถวรวมเลื่อนไปหนึ่งคอลัมน์ ระบบจึงหาแถวรวมไม่เจอทั้งที่ตัวเลขถูกหมด
+
+    ตัดตำแหน่งตามสัดส่วนจำนวนตัวอักษร ซึ่งตรงพอดีเมื่อความกว้างตัวอักษรใกล้เคียงกัน
+    ถ้าทุกบรรทัดมีหน่วยเหมือนกัน ทุกเซลล์ก็หดเท่ากัน คอลัมน์ยังตรงเหมือนเดิม
+    """
+    out = []
+    for r in rows:
+        cells = []
+        for c in r.cells:
+            t = c.text.strip()
+            m = _NUM_WITH_UNIT.match(t)
+            if m is None or parse_number(m.group("num")) is None:
+                cells.append(c)
+                continue
+            w = c.x1 - c.x0
+            xa = c.x0 + w * m.end("num") / len(t)
+            xb = c.x0 + w * m.start("unit") / len(t)
+            cells.append(Cell(m.group("num"), c.x0, c.y0, xa, c.y1))
+            cells.append(Cell(m.group("unit"), xb, c.y0, c.x1, c.y1))
+        cells.sort(key=lambda c: c.x0)
+        out.append(Row(cells))
+    return out
 
 
 def numeric_rows(rows, max_tokens: int = MAX_TOKENS_IN_NUMERIC_CELL):
@@ -31,7 +70,7 @@ def numeric_rows(rows, max_tokens: int = MAX_TOKENS_IN_NUMERIC_CELL):
     เซลล์ตัวเลขจริงมีได้อย่างมาก 2 คำ คือค่ากับหน่วย เช่น `3424.00KGS` หรือ `500 M`
     """
     out = []
-    for r in rows:
+    for r in split_units(rows):
         keep = [c for c in r.cells if len(c.text.split()) <= max_tokens]
         if keep:
             out.append(Row(keep))
